@@ -3,12 +3,13 @@ RCA API - COMPLETE OPERATIONAL SERVICE
 Root Cause Analysis using knowledge graph and semantic search
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from neo4j import AsyncGraphDatabase
 import httpx
 import os
 from typing import List, Dict, Optional
+import uuid
 
 app = FastAPI(title="Trinity RCA API")
 
@@ -16,6 +17,8 @@ NEO4J_URI = os.getenv("NEO4J_URI", "bolt://neo4j:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "trinity123")
 VECTOR_SEARCH_URL = os.getenv("VECTOR_SEARCH_URL", "http://vector-search:8000")
+NTAI_CALLBACK_URL = os.getenv("NTAI_CALLBACK_URL", "")
+NTAI_CALLBACK_SECRET = os.getenv("NTAI_CALLBACK_SECRET", "")
 
 driver = AsyncGraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
 
@@ -23,6 +26,8 @@ class RCARequest(BaseModel):
     issue_description: str
     error_code: Optional[str] = None
     component: Optional[str] = None
+    tenant_id: Optional[str] = None  # For NT-AI-Engine integration
+    callback: bool = False  # If True, send results to NT-AI callback
 
 class SimilarIssue(BaseModel):
     issue_id: str
@@ -38,8 +43,33 @@ class RCAResponse(BaseModel):
     estimated_time: str
     confidence: float
 
+async def send_rca_callback(request_id: str, request: RCARequest, response: RCAResponse):
+    """Send RCA results to NT-AI-Engine callback (if configured)"""
+
+    if not NTAI_CALLBACK_URL or not request.callback:
+        return
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.post(
+                NTAI_CALLBACK_URL,
+                json={
+                    "request_id": request_id,
+                    "issue_description": request.issue_description,
+                    "similar_issues": [issue.model_dump() for issue in response.similar_issues],
+                    "affected_services": response.affected_services,
+                    "recommended_solutions": response.recommended_solutions,
+                    "estimated_time": response.estimated_time,
+                    "confidence": response.confidence,
+                    "tenant_id": request.tenant_id
+                },
+                headers={"X-Webhook-Secret": NTAI_CALLBACK_SECRET} if NTAI_CALLBACK_SECRET else {}
+            )
+    except Exception as e:
+        print(f"RCA callback failed: {e}")
+
 @app.post("/api/rca", response_model=RCAResponse)
-async def analyze_rca(request: RCARequest):
+async def analyze_rca(request: RCARequest, background_tasks: BackgroundTasks):
     """
     Perform root cause analysis with semantic search
 
@@ -137,13 +167,20 @@ async def analyze_rca(request: RCARequest):
                 "success_rate": record["success_rate"]
             })
 
-    return RCAResponse(
+    response = RCAResponse(
         similar_issues=similar_issues,
         affected_services=affected_services,
         recommended_solutions=recommended_solutions,
         estimated_time="30 minutes" if similar_issues else "2-4 hours",
         confidence=0.85 if similar_issues else 0.3
     )
+
+    # Send callback to NT-AI-Engine if requested
+    if request.callback and NTAI_CALLBACK_URL:
+        request_id = f"rca-{uuid.uuid4().hex[:12]}"
+        background_tasks.add_task(send_rca_callback, request_id, request, response)
+
+    return response
 
 @app.get("/health")
 async def health():
