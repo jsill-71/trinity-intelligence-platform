@@ -1,12 +1,10 @@
-version: '3.8'
-
 services:
   nats:
     image: nats:latest
     command: ["-js"]
     ports:
       - "4222:4222"
-    
+
   postgres:
     image: postgres:16-alpine
     environment:
@@ -15,7 +13,7 @@ services:
       POSTGRES_PASSWORD: trinity
     ports:
       - "5432:5432"
-      
+
   neo4j:
     image: neo4j:5-community
     environment:
@@ -23,7 +21,7 @@ services:
     ports:
       - "7474:7474"
       - "7687:7687"
-  
+
   event-collector:
     build:
       context: .
