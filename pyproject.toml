@@ -17,7 +17,8 @@ asyncpg = "^0.29.0"
 redis = "^5.0.1"
 nats-py = "^2.6.0"
 neo4j = "^5.16.0"
-agentdb = "^0.1.0"
+# agentdb = "^0.1.0"  # REMOVED: Incompatible with Pydantic v2
+# Will use FAISS or manual semantic search until AgentDB supports Pydantic v2
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.4"
