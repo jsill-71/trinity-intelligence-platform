@@ -314,5 +314,40 @@ services:
       - neo4j
       - redis
 
+  backup-service:
+    build:
+      context: .
+      dockerfile: services/backup-service/Dockerfile
+    environment:
+      POSTGRES_URL: postgresql://trinity:trinity@postgres:5432/trinity
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: trinity123
+      BACKUP_DIR: /app/backups
+      BACKUP_RETENTION_DAYS: 7
+    restart: always
+    volumes:
+      - backups:/app/backups
+    depends_on:
+      - postgres
+      - neo4j
+
+  health-monitor:
+    build:
+      context: .
+      dockerfile: services/health-monitor/Dockerfile
+    environment:
+      POSTGRES_URL: postgresql://trinity:trinity@postgres:5432/trinity
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      ALERT_MANAGER_URL: http://alert-manager:8000
+      CHECK_INTERVAL: 30
+    restart: always
+    depends_on:
+      - postgres
+      - redis
+      - alert-manager
+
 volumes:
   ml-models:
+  backups:

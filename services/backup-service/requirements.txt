@@ -1,0 +1,4 @@
+asyncpg==0.29.0
+neo4j==5.16.0
+apscheduler==3.10.4
+redis==5.0.1
