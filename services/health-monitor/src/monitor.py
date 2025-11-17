@@ -162,6 +162,20 @@ async def setup():
     # Connect to PostgreSQL
     pg_pool = await asyncpg.create_pool(POSTGRES_URL, min_size=2, max_size=5)
 
+    # Create health_checks table at startup (prevents race condition)
+    async with pg_pool.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS health_checks (
+                id SERIAL PRIMARY KEY,
+                service_name VARCHAR(100),
+                status VARCHAR(50),
+                response_time FLOAT,
+                details JSONB,
+                checked_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        print("[HEALTH MONITOR] health_checks table ready")
+
     # Start monitoring
     await monitor_loop()
 

@@ -62,9 +62,19 @@ async def collect_service_health():
 
     SERVICES_UP.set(healthy)
 
+# Global Neo4j driver (create once, reuse to prevent connection leaks)
+_neo4j_driver = None
+
+def get_neo4j_driver():
+    """Get or create Neo4j driver (singleton pattern)"""
+    global _neo4j_driver
+    if _neo4j_driver is None:
+        _neo4j_driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    return _neo4j_driver
+
 async def collect_kg_metrics():
     """Collect knowledge graph metrics"""
-    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    driver = get_neo4j_driver()
 
     try:
         with driver.session() as session:
@@ -79,8 +89,6 @@ async def collect_kg_metrics():
             KG_RELATIONSHIPS.set(record["count"] if record else 0)
     except:
         pass
-    finally:
-        driver.close()
 
 async def collect_vector_metrics():
     """Collect vector search metrics"""

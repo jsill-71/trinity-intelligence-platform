@@ -89,14 +89,22 @@ async def startup():
             CREATE INDEX IF NOT EXISTS idx_alerts_status ON alerts(status);
         """)
 
+        # Add unique constraint on fingerprint for active alerts (prevents race condition duplicates)
+        await conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_fingerprint_active
+            ON alerts(fingerprint)
+            WHERE status = 'active'
+        """)
+
 @app.on_event("shutdown")
 async def shutdown():
     if pool:
         await pool.close()
 
 def generate_fingerprint(alert: Alert) -> str:
-    """Generate deduplication fingerprint"""
-    data = f"{alert.alert_type}:{alert.title}"
+    """Generate deduplication fingerprint - includes severity and description to prevent collisions"""
+    desc_preview = alert.description[:100] if alert.description else ""
+    data = f"{alert.alert_type}:{alert.severity}:{alert.title}:{desc_preview}"
     return hashlib.sha256(data.encode()).hexdigest()
 
 async def send_alert_notification(alert_id: int, alert: Alert):

@@ -14,11 +14,17 @@ import joblib
 import os
 from datetime import datetime
 import json
+import asyncpg
+import uuid
 
 app = FastAPI(title="Trinity ML Training Service")
 
 MODELS_DIR = "/app/models"
+POSTGRES_URL = os.getenv("POSTGRES_URL", "postgresql://trinity:trinity@postgres:5432/trinity")
+
 os.makedirs(MODELS_DIR, exist_ok=True)
+
+pool = None
 
 class TrainingData(BaseModel):
     features: List[List[float]]
@@ -44,14 +50,42 @@ class TrainingJob(BaseModel):
     created_at: str
     completed_at: Optional[str] = None
 
-# In-memory training jobs
-training_jobs = {}
+@app.on_event("startup")
+async def startup():
+    global pool
+    pool = await asyncpg.create_pool(POSTGRES_URL, min_size=2, max_size=10)
 
-def train_model(job_id: str, X_train, X_test, y_train, y_test, model_type: str):
+    # Create training_jobs table
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS training_jobs (
+                id SERIAL PRIMARY KEY,
+                job_id VARCHAR(100) UNIQUE NOT NULL,
+                model_type VARCHAR(50) NOT NULL,
+                status VARCHAR(50) NOT NULL,
+                metrics JSONB,
+                error TEXT,
+                created_at TIMESTAMP DEFAULT NOW(),
+                completed_at TIMESTAMP
+            )
+        """)
+
+@app.on_event("shutdown")
+async def shutdown():
+    if pool:
+        await pool.close()
+
+async def train_model(job_id: str, X_train, X_test, y_train, y_test, model_type: str):
     """Background training task"""
 
     try:
-        training_jobs[job_id]["status"] = "training"
+        # Update status to training
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE training_jobs
+                SET status = 'training'
+                WHERE job_id = $1
+            """, job_id)
 
         # Select model
         if model_type == "random_forest":
@@ -59,8 +93,14 @@ def train_model(job_id: str, X_train, X_test, y_train, y_test, model_type: str):
         elif model_type == "gradient_boosting":
             model = GradientBoostingClassifier(n_estimators=100, random_state=42)
         else:
-            training_jobs[job_id]["status"] = "failed"
-            training_jobs[job_id]["error"] = f"Unknown model type: {model_type}"
+            async with pool.acquire() as conn:
+                await conn.execute("""
+                    UPDATE training_jobs
+                    SET status = 'failed',
+                        error = $1,
+                        completed_at = NOW()
+                    WHERE job_id = $2
+                """, f"Unknown model type: {model_type}", job_id)
             return
 
         # Train
@@ -90,20 +130,32 @@ def train_model(job_id: str, X_train, X_test, y_train, y_test, model_type: str):
                 "trained_at": datetime.now().isoformat()
             }, f)
 
-        # Update job
-        training_jobs[job_id]["status"] = "completed"
-        training_jobs[job_id]["metrics"] = metrics
-        training_jobs[job_id]["completed_at"] = datetime.now().isoformat()
+        # Update job in database
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE training_jobs
+                SET status = 'completed',
+                    metrics = $1,
+                    completed_at = NOW()
+                WHERE job_id = $2
+            """, json.dumps(metrics), job_id)
 
     except Exception as e:
-        training_jobs[job_id]["status"] = "failed"
-        training_jobs[job_id]["error"] = str(e)
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE training_jobs
+                SET status = 'failed',
+                    error = $1,
+                    completed_at = NOW()
+                WHERE job_id = $2
+            """, str(e), job_id)
 
 @app.post("/train", response_model=TrainingJob)
 async def train_ml_model(data: TrainingData, background_tasks: BackgroundTasks):
     """Start model training job"""
 
-    job_id = f"model-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    # Use UUID to prevent timestamp collisions
+    job_id = f"model-{uuid.uuid4().hex[:12]}"
 
     # Prepare data
     X = np.array(data.features)
@@ -113,31 +165,49 @@ async def train_ml_model(data: TrainingData, background_tasks: BackgroundTasks):
         X, y, test_size=data.test_size, random_state=42
     )
 
-    # Create job
-    training_jobs[job_id] = {
-        "job_id": job_id,
-        "model_type": data.model_type,
-        "status": "queued",
-        "created_at": datetime.now().isoformat(),
-        "metrics": None,
-        "completed_at": None
-    }
+    # Create job in database
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO training_jobs (job_id, model_type, status)
+            VALUES ($1, $2, 'queued')
+        """, job_id, data.model_type)
 
     # Start background training
     background_tasks.add_task(
         train_model, job_id, X_train, X_test, y_train, y_test, data.model_type
     )
 
-    return TrainingJob(**training_jobs[job_id])
+    return TrainingJob(
+        job_id=job_id,
+        model_type=data.model_type,
+        status="queued",
+        created_at=datetime.now().isoformat(),
+        metrics=None,
+        completed_at=None
+    )
 
 @app.get("/jobs/{job_id}", response_model=TrainingJob)
 async def get_training_job(job_id: str):
     """Get training job status"""
 
-    if job_id not in training_jobs:
+    async with pool.acquire() as conn:
+        job = await conn.fetchrow("""
+            SELECT job_id, model_type, status, metrics, error, created_at, completed_at
+            FROM training_jobs
+            WHERE job_id = $1
+        """, job_id)
+
+    if not job:
         return {"error": "Job not found"}, 404
 
-    return TrainingJob(**training_jobs[job_id])
+    return TrainingJob(
+        job_id=job["job_id"],
+        model_type=job["model_type"],
+        status=job["status"],
+        metrics=ModelMetrics(**json.loads(job["metrics"])) if job["metrics"] else None,
+        created_at=job["created_at"].isoformat(),
+        completed_at=job["completed_at"].isoformat() if job["completed_at"] else None
+    )
 
 @app.post("/predict")
 async def predict(request: PredictionRequest):
@@ -177,7 +247,17 @@ async def list_models():
 
 @app.get("/health")
 async def health():
-    return {
-        "status": "healthy",
-        "models_count": len([f for f in os.listdir(MODELS_DIR) if f.endswith('.joblib')])
-    }
+    try:
+        async with pool.acquire() as conn:
+            await conn.fetchval("SELECT 1")
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "models_count": len([f for f in os.listdir(MODELS_DIR) if f.endswith('.joblib')])
+        }
+    except:
+        return {
+            "status": "degraded",
+            "database": "disconnected",
+            "models_count": len([f for f in os.listdir(MODELS_DIR) if f.endswith('.joblib')])
+        }
