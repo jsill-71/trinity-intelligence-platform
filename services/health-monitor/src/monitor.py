@@ -10,6 +10,7 @@ import redis
 import os
 from datetime import datetime
 import json
+from typing import Dict
 
 POSTGRES_URL = os.getenv("POSTGRES_URL", "postgresql://trinity:trinity@postgres:5432/trinity")
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
