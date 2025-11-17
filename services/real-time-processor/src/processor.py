@@ -167,6 +167,16 @@ async def run():
     nc = await nats.connect(NATS_URL)
     js = nc.jetstream()
 
+    # Create stream if not exists
+    try:
+        await js.add_stream(
+            name="EVENTS",
+            subjects=["events.>"]
+        )
+        print("[RT-PROCESSOR] EVENTS stream created/verified")
+    except Exception as e:
+        print(f"[RT-PROCESSOR] Stream exists or error: {e}")
+
     # Subscribe to all events
     try:
         await js.subscribe(
