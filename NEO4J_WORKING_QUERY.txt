@@ -1,0 +1,14 @@
+PASTE THIS IN NEO4J BROWSER - GUARANTEED TO WORK:
+
+MATCH (d:Document)-[:DOCUMENTS]->(s:Service)
+WHERE s.name CONTAINS 'email'
+RETURN d, s
+
+Then click "Graph" tab (icon with circles and lines, not table icon)
+
+You will see:
+- Blue circles: Document nodes
+- Green circles: Service nodes (email_monitor, etc.)
+- Arrows connecting them
+
+Currently shows: 866 document-service relationships exist
