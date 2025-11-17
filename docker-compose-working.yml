@@ -199,5 +199,42 @@ services:
     depends_on:
       - postgres
 
+  data-aggregator:
+    build:
+      context: .
+      dockerfile: services/data-aggregator/Dockerfile
+    environment:
+      POSTGRES_URL: postgresql://trinity:trinity@postgres:5432/trinity
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: trinity123
+    ports:
+      - "8011:8000"
+    restart: always
+    depends_on:
+      - postgres
+      - neo4j
+
+  metrics-collector:
+    build:
+      context: .
+      dockerfile: services/metrics-collector/Dockerfile
+    environment:
+      POSTGRES_URL: postgresql://trinity:trinity@postgres:5432/trinity
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: trinity123
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      METRICS_PORT: 9090
+      COLLECT_INTERVAL: 15
+    ports:
+      - "9090:9090"
+    restart: always
+    depends_on:
+      - postgres
+      - neo4j
+      - redis
+
 volumes:
   ml-models:
