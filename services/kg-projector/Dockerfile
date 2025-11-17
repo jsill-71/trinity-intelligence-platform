@@ -2,19 +2,12 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install Poetry
-RUN pip install poetry
-
-# Copy dependency files
-COPY pyproject.toml poetry.lock* ./
-COPY shared/ ./shared/
-
 # Install dependencies
-RUN poetry config virtualenvs.create false \
-    && poetry install --no-interaction --no-ansi --only main
+RUN pip install --no-cache-dir \
+    neo4j==5.16.0 \
+    nats-py==2.6.0
 
 # Copy service code
-COPY services/kg-projector/ ./services/kg-projector/
+COPY services/kg-projector/src/ ./services/kg-projector/src/
 
-# Run projector
 CMD ["python", "-m", "services.kg-projector.src.main"]
