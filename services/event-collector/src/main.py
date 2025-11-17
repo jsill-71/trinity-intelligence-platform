@@ -116,7 +116,7 @@ async def handle_push_event(payload: dict):
             "message": commit["message"],
             "files_changed": commit.get("added", []) + commit.get("modified", []),
             "repository": payload["repository"]["full_name"],
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "timestamp": datetime.now().isoformat()
         }
 
         # Publish to NATS
@@ -130,7 +130,7 @@ async def handle_push_event(payload: dict):
             """,
             event_data["event_type"],
             str(event_data),
-            datetime.now(timezone.utc)
+            datetime.now()
         )
 
         logger.info(f"Published commit event: {commit['id'][:7]}")
@@ -147,7 +147,7 @@ async def handle_issue_event(payload: dict):
             "body": payload["issue"]["body"],
             "labels": [l["name"] for l in payload["issue"].get("labels", [])],
             "repository": payload["repository"]["full_name"],
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "timestamp": datetime.now().isoformat()
         }
 
         # Publish to NATS
@@ -161,7 +161,7 @@ async def handle_issue_event(payload: dict):
             """,
             event_data["event_type"],
             str(event_data),
-            datetime.now(timezone.utc)
+            datetime.now()
         )
 
         logger.info(f"Published issue event: #{payload['issue']['number']}")
@@ -177,7 +177,7 @@ async def handle_pr_event(payload: dict):
             "title": payload["pull_request"]["title"],
             "files_changed": payload["pull_request"].get("changed_files", 0),
             "repository": payload["repository"]["full_name"],
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "timestamp": datetime.now().isoformat()
         }
 
         # Publish to NATS
@@ -191,7 +191,7 @@ async def handle_pr_event(payload: dict):
             """,
             event_data["event_type"],
             str(event_data),
-            datetime.now(timezone.utc)
+            datetime.now()
         )
 
         logger.info(f"Published PR event: #{payload['pull_request']['number']}")
