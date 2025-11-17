@@ -170,5 +170,34 @@ services:
       - notification-service
       - ml-training
 
+  agent-orchestrator:
+    build:
+      context: .
+      dockerfile: services/agent-orchestrator/Dockerfile
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: claude-haiku-4.5-20250514
+      POSTGRES_URL: postgresql://trinity:trinity@postgres:5432/trinity
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    ports:
+      - "8009:8000"
+    restart: always
+    depends_on:
+      - postgres
+      - redis
+
+  workflow-engine:
+    build:
+      context: .
+      dockerfile: services/workflow-engine/Dockerfile
+    environment:
+      POSTGRES_URL: postgresql://trinity:trinity@postgres:5432/trinity
+    ports:
+      - "8010:8000"
+    restart: always
+    depends_on:
+      - postgres
+
 volumes:
   ml-models:

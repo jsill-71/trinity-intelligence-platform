@@ -212,7 +212,7 @@ async def deploy_swarm(swarm: SwarmTask):
 
     # Break task into subtasks
     subtasks = [
-        f"Subtask {i+1}: {swarm.task_description}",
+        f"Subtask {i+1}: {swarm.task_description}"
         for i in range(swarm.agent_count)
     ]
 
