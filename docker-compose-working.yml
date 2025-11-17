@@ -142,5 +142,33 @@ services:
     volumes:
       - ml-models:/app/models
 
+  api-gateway:
+    build:
+      context: .
+      dockerfile: services/api-gateway/Dockerfile
+    environment:
+      USER_MGMT_URL: http://user-management:8000
+      RCA_API_URL: http://rca-api:8000
+      INVESTIGATION_URL: http://investigation-api:8000
+      VECTOR_SEARCH_URL: http://vector-search:8000
+      AUDIT_URL: http://audit-service:8000
+      NOTIFICATION_URL: http://notification-service:8000
+      ML_TRAINING_URL: http://ml-training:8000
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET:-trinity-secret-key-change-in-production}
+    ports:
+      - "8000:8000"
+    restart: always
+    depends_on:
+      - redis
+      - user-management
+      - rca-api
+      - investigation-api
+      - vector-search
+      - audit-service
+      - notification-service
+      - ml-training
+
 volumes:
   ml-models:
