@@ -348,6 +348,19 @@ services:
       - redis
       - alert-manager
 
+  rate-limiter:
+    build:
+      context: .
+      dockerfile: services/rate-limiter/Dockerfile
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    ports:
+      - "8015:8000"
+    restart: always
+    depends_on:
+      - redis
+
 volumes:
   ml-models:
   backups:
