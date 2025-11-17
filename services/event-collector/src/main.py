@@ -7,6 +7,7 @@ This is OPERATIONAL CODE - it actually runs and processes webhooks.
 import hmac
 import hashlib
 import os
+import json
 from fastapi import FastAPI, Request, HTTPException, Header
 from nats.aio.client import Client as NATS
 import asyncpg
@@ -52,6 +53,18 @@ async def startup():
     # Connect to PostgreSQL
     db_pool = await asyncpg.create_pool(POSTGRES_URL, min_size=2, max_size=10)
     logger.info(f"Connected to PostgreSQL")
+
+    # Create events table if not exists
+    async with db_pool.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS events (
+                id SERIAL PRIMARY KEY,
+                event_type VARCHAR(100) NOT NULL,
+                event_data JSONB NOT NULL,
+                timestamp TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        logger.info("Events table ready")
 
 
 @app.on_event("shutdown")
@@ -120,7 +133,7 @@ async def handle_push_event(payload: dict):
         }
 
         # Publish to NATS
-        await nc.publish("git.commits", bytes(str(event_data), 'utf-8'))
+        await nc.publish("git.commits", json.dumps(event_data).encode('utf-8'))
 
         # Store in PostgreSQL (event store)
         await db_pool.execute(
@@ -129,7 +142,7 @@ async def handle_push_event(payload: dict):
             VALUES ($1, $2, $3)
             """,
             event_data["event_type"],
-            str(event_data),
+            json.dumps(event_data),
             datetime.now()
         )
 
@@ -151,7 +164,7 @@ async def handle_issue_event(payload: dict):
         }
 
         # Publish to NATS
-        await nc.publish(f"github.issues.{payload['action']}", bytes(str(event_data), 'utf-8'))
+        await nc.publish(f"github.issues.{payload['action']}", json.dumps(event_data).encode('utf-8'))
 
         # Store in event store
         await db_pool.execute(
@@ -160,7 +173,7 @@ async def handle_issue_event(payload: dict):
             VALUES ($1, $2, $3)
             """,
             event_data["event_type"],
-            str(event_data),
+            json.dumps(event_data),
             datetime.now()
         )
 
@@ -181,7 +194,7 @@ async def handle_pr_event(payload: dict):
         }
 
         # Publish to NATS
-        await nc.publish(f"github.pr.{payload['action']}", bytes(str(event_data), 'utf-8'))
+        await nc.publish(f"github.pr.{payload['action']}", json.dumps(event_data).encode('utf-8'))
 
         # Store in event store
         await db_pool.execute(
@@ -190,7 +203,7 @@ async def handle_pr_event(payload: dict):
             VALUES ($1, $2, $3)
             """,
             event_data["event_type"],
-            str(event_data),
+            json.dumps(event_data),
             datetime.now()
         )
 

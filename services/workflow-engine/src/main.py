@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from croniter import croniter
 import json
 import asyncio
+from urllib.parse import urlparse
 
 app = FastAPI(title="Trinity Workflow Engine")
 
@@ -94,8 +95,40 @@ async def shutdown():
     if pool:
         await pool.close()
 
+async def validate_service_url(url: str) -> bool:
+    """Validate service URL to prevent SSRF"""
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+        port = parsed.port or 8000
+
+        # Whitelist of allowed services
+        allowed_services = {
+            "user-management", "rca-api", "investigation-api", "vector-search",
+            "audit-service", "notification-service", "ml-training", "agent-orchestrator",
+            "query-optimizer", "data-aggregator", "alert-manager", "cache-service"
+        }
+
+        return (parsed.scheme in ["http", "https"] and
+                hostname in allowed_services and
+                8000 <= port <= 8015)
+    except:
+        return False
+
 async def execute_workflow_step(step: WorkflowStep, execution_id: int) -> bool:
     """Execute single workflow step"""
+
+    # Validate service URL (prevent SSRF)
+    if not await validate_service_url(step.service_url):
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE workflow_step_results
+                SET status = 'failed',
+                    error = 'Invalid service URL (security)',
+                    completed_at = NOW()
+                WHERE execution_id = $1 AND step_id = $2
+            """, execution_id, step.step_id)
+        return False
 
     # Record step start
     async with pool.acquire() as conn:
@@ -119,7 +152,12 @@ async def execute_workflow_step(step: WorkflowStep, execution_id: int) -> bool:
                     response = await client.request(step.method, step.service_url, json=step.payload)
 
                 if response.status_code < 400:
-                    # Success
+                    # Success - safely handle JSON response
+                    try:
+                        result_data = response.json()
+                    except:
+                        result_data = {"status_code": response.status_code, "text": response.text[:500]}
+
                     async with pool.acquire() as conn:
                         await conn.execute("""
                             UPDATE workflow_step_results
@@ -127,7 +165,7 @@ async def execute_workflow_step(step: WorkflowStep, execution_id: int) -> bool:
                                 result = $1,
                                 completed_at = NOW()
                             WHERE id = $2
-                        """, json.dumps(response.json()), step_result_id)
+                        """, json.dumps(result_data), step_result_id)
                     return True
 
         except Exception as e:

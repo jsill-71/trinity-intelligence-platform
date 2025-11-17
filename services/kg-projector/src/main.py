@@ -85,7 +85,7 @@ class KnowledgeGraphProjector:
         try:
             # Parse event data
             event_str = msg.data.decode()
-            event = eval(event_str)  # Note: Use json.loads in production
+            event = json.loads(event_str)  # Secure JSON parsing
 
             async with self.neo4j.session() as session:
                 # Create commit node
@@ -128,7 +128,7 @@ class KnowledgeGraphProjector:
 
         try:
             event_str = msg.data.decode()
-            event = eval(event_str)
+            event = json.loads(event_str)
 
             async with self.neo4j.session() as session:
                 # Create issue node
@@ -163,7 +163,7 @@ class KnowledgeGraphProjector:
 
         try:
             event_str = msg.data.decode()
-            event = eval(event_str)
+            event = json.loads(event_str)
 
             async with self.neo4j.session() as session:
                 # Create/update service node
