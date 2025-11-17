@@ -236,5 +236,33 @@ services:
       - neo4j
       - redis
 
+  real-time-processor:
+    build:
+      context: .
+      dockerfile: services/real-time-processor/Dockerfile
+    environment:
+      NATS_URL: nats://nats:4222
+      POSTGRES_URL: postgresql://trinity:trinity@postgres:5432/trinity
+      NOTIFICATION_URL: http://notification-service:8000
+    restart: always
+    depends_on:
+      - nats
+      - postgres
+      - notification-service
+
+  cache-service:
+    build:
+      context: .
+      dockerfile: services/cache-service/Dockerfile
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      DEFAULT_TTL: 3600
+    ports:
+      - "8012:8000"
+    restart: always
+    depends_on:
+      - redis
+
 volumes:
   ml-models:
