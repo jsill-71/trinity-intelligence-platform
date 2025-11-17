@@ -181,12 +181,7 @@ async def send_slack_notification(notification: SlackNotification):
 async def send_notification(notification: Notification, background_tasks: BackgroundTasks):
     """Send notification via specified channel"""
 
-    # Queue notification
-    if REDIS_AVAILABLE:
-        queue_key = f"notification_queue:{notification.priority}"
-        redis_client.rpush(queue_key, json.dumps(notification.model_dump()))
-
-    # Send based on channel
+    # Send based on channel (queue removed - was orphaned, no consumer)
     if notification.channel == "email":
         result = await send_email_notification(notification.notification_data)
     elif notification.channel == "webhook":

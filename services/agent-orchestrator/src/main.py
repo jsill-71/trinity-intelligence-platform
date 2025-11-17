@@ -162,11 +162,7 @@ async def execute_agent(task: AgentTask, background_tasks: BackgroundTasks):
             json.dumps(task.context) if task.context else None,
             ANTHROPIC_MODEL)
 
-    # Queue task
-    if REDIS_AVAILABLE:
-        redis_client.rpush(f"agent_queue:{task.priority}", str(task_id))
-
-    # Execute in background
+    # Execute in background (queue removed - was orphaned, no consumer)
     background_tasks.add_task(execute_agent_task, task_id, task)
 
     return AgentResponse(

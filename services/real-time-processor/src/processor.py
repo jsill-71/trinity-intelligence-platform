@@ -167,23 +167,22 @@ async def run():
     nc = await nats.connect(NATS_URL)
     js = nc.jetstream()
 
-    # Create stream if not exists
+    # Subscribe to actual streams created by Event Collector
     try:
-        await js.add_stream(
-            name="EVENTS",
-            subjects=["events.>"]
-        )
-        print("[RT-PROCESSOR] EVENTS stream created/verified")
-    except Exception as e:
-        print(f"[RT-PROCESSOR] Stream exists or error: {e}")
-
-    # Subscribe to all events
-    try:
+        # Subscribe to GitHub events (matches Event Collector's GITHUB_EVENTS stream)
         await js.subscribe(
-            "events.>",
+            "github.>",
             cb=process_event,
-            stream="EVENTS",
-            durable="realtime-processor"
+            stream="GITHUB_EVENTS",
+            durable="realtime-processor-github"
+        )
+
+        # Subscribe to git commits (matches Event Collector's GIT_COMMITS stream)
+        await js.subscribe(
+            "git.commits",
+            cb=process_event,
+            stream="GIT_COMMITS",
+            durable="realtime-processor-commits"
         )
 
         print("[RT-PROCESSOR] Subscribed to events.> stream")

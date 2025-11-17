@@ -60,8 +60,7 @@ async def investigate_task(request: InvestigationRequest):
             rca_response = await client.post(
                 f"{RCA_API_URL}/api/rca",
                 json={
-                    "title": request.task_description,
-                    "description": request.task_description,
+                    "issue_description": request.task_description,  # Fixed: RCA expects issue_description
                     "component": request.component or "unknown"
                 },
                 timeout=30.0
