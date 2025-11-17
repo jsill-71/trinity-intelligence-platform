@@ -153,6 +153,44 @@ class KnowledgeGraphProjector:
                     event_type=event["event_type"]
                 )
 
+                # Link issue to affected services (if service name in title/body)
+                # This enables RCA API to find affected services
+                services_mentioned = []
+                text_to_search = (event.get("title", "") + " " + event.get("body", "")).lower()
+
+                # Extract service names from text (basic keyword matching)
+                common_service_keywords = ["email", "calendar", "teams", "auth", "database", "api", "webhook"]
+                for keyword in common_service_keywords:
+                    if keyword in text_to_search:
+                        services_mentioned.append(f"{keyword}_service")
+
+                # Create HAD_ISSUE relationships
+                for service_name in services_mentioned:
+                    await session.run("""
+                        MERGE (s:Service {name: $service})
+                        MATCH (i:Issue {repository: $repository, number: $number})
+                        MERGE (s)-[:HAD_ISSUE]->(i)
+                    """,
+                        service=service_name,
+                        repository=event["repository"],
+                        number=event["issue_number"]
+                    )
+
+                # If issue is closed, create Solution node
+                if event["event_type"].endswith("closed"):
+                    await session.run("""
+                        MATCH (i:Issue {repository: $repository, number: $number})
+                        MERGE (sol:Solution {id: $solution_id})
+                        SET sol.title = 'Resolved: ' + i.title,
+                            sol.category = 'issue_resolution',
+                            sol.success_rate = 0.8
+                        MERGE (i)-[:RESOLVED_BY]->(sol)
+                    """,
+                        repository=event["repository"],
+                        number=event["issue_number"],
+                        solution_id=f"sol-{event['repository']}-{event['issue_number']}"
+                    )
+
                 logger.info(f"Projected issue #{event['issue_number']} to Neo4j")
 
         except Exception as e:
