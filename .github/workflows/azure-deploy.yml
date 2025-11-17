@@ -1,0 +1,71 @@
+name: Deploy to Azure Container Apps
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+env:
+  AZURE_RESOURCE_GROUP: trinity-platform-rg
+  ACR_NAME: trinityacr
+  LOCATION: eastus
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Build and Push Docker Images
+      run: |
+        # Login to ACR
+        az acr login --name ${{ env.ACR_NAME }}
+
+        # Get ACR login server
+        ACR_LOGIN_SERVER=$(az acr show --name ${{ env.ACR_NAME }} --query loginServer -o tsv)
+
+        # Build and push all services
+        for service in event-collector kg-projector rca-api investigation-api vector-search user-management audit-service notification-service ml-training agent-orchestrator workflow-engine api-gateway; do
+          echo "Building $service..."
+          docker build -t $ACR_LOGIN_SERVER/$service:${{ github.sha }} \
+                       -t $ACR_LOGIN_SERVER/$service:latest \
+                       -f services/$service/Dockerfile .
+
+          docker push $ACR_LOGIN_SERVER/$service:${{ github.sha }}
+          docker push $ACR_LOGIN_SERVER/$service:latest
+        done
+
+    - name: Deploy Infrastructure
+      run: |
+        az deployment group create \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --template-file azure/infrastructure.bicep \
+          --parameters location=${{ env.LOCATION }}
+
+    - name: Update Container Apps
+      run: |
+        ACR_LOGIN_SERVER=$(az acr show --name ${{ env.ACR_NAME }} --query loginServer -o tsv)
+
+        # Update each Container App with new image
+        for service in event-collector rca-api vector-search; do
+          az containerapp update \
+            --name $service \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --image $ACR_LOGIN_SERVER/$service:${{ github.sha }}
+        done
+
+    - name: Verify Deployment
+      run: |
+        # Health checks
+        EVENT_COLLECTOR_URL=$(az containerapp show --name event-collector --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --query properties.configuration.ingress.fqdn -o tsv)
+
+        curl -f https://$EVENT_COLLECTOR_URL/health || exit 1
+
+        echo "Deployment successful!"
+        echo "Event Collector: https://$EVENT_COLLECTOR_URL"
