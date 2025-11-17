@@ -70,3 +70,77 @@ services:
     ports:
       - "8003:8000"
     restart: always
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: always
+
+  vector-search:
+    build:
+      context: .
+      dockerfile: services/vector-search/Dockerfile
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    ports:
+      - "8004:8000"
+    restart: always
+    depends_on:
+      - redis
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: services/notification-service/Dockerfile
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+    ports:
+      - "8005:8000"
+    restart: always
+    depends_on:
+      - redis
+
+  audit-service:
+    build:
+      context: .
+      dockerfile: services/audit-service/Dockerfile
+    environment:
+      POSTGRES_URL: postgresql://trinity:trinity@postgres:5432/trinity
+    ports:
+      - "8006:8000"
+    restart: always
+    depends_on:
+      - postgres
+
+  user-management:
+    build:
+      context: .
+      dockerfile: services/user-management/Dockerfile
+    environment:
+      POSTGRES_URL: postgresql://trinity:trinity@postgres:5432/trinity
+      JWT_SECRET: ${JWT_SECRET:-trinity-secret-key-change-in-production}
+    ports:
+      - "8007:8000"
+    restart: always
+    depends_on:
+      - postgres
+
+  ml-training:
+    build:
+      context: .
+      dockerfile: services/ml-training/Dockerfile
+    ports:
+      - "8008:8000"
+    restart: always
+    volumes:
+      - ml-models:/app/models
+
+volumes:
+  ml-models:

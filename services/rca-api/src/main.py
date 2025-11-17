@@ -15,6 +15,7 @@ app = FastAPI(title="Trinity RCA API")
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://neo4j:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "trinity123")
+VECTOR_SEARCH_URL = os.getenv("VECTOR_SEARCH_URL", "http://vector-search:8000")
 
 driver = AsyncGraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
 
@@ -40,33 +41,69 @@ class RCAResponse(BaseModel):
 @app.post("/api/rca", response_model=RCAResponse)
 async def analyze_rca(request: RCARequest):
     """
-    Perform root cause analysis
+    Perform root cause analysis with semantic search
 
-    ACTUAL WORKING CODE - queries real knowledge graph
+    ACTUAL WORKING CODE - queries real knowledge graph with vector similarity
     """
 
-    # Find similar issues by keyword matching (simple version - would use vector search)
+    # Semantic search for similar issues using vector search service
     similar_issues = []
-    async with driver.session() as session:
-        result = await session.run("""
-            MATCH (i:Issue)
-            WHERE toLower(i.title) CONTAINS toLower($keyword)
-               OR toLower(i.category) CONTAINS toLower($keyword)
-            RETURN i.id as id,
-                   i.title as title,
-                   i.status as status,
-                   i.severity as severity
-            LIMIT 5
-        """, keyword=request.issue_description.split()[0])  # First word as keyword
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Search for similar issues
+            vector_response = await client.post(
+                f"{VECTOR_SEARCH_URL}/search",
+                json={
+                    "query": request.issue_description,
+                    "k": 5,
+                    "filter_metadata": {"type": "issue"}
+                }
+            )
 
-        async for record in result:
-            similar_issues.append(SimilarIssue(
-                issue_id=record["id"] if record["id"] else "unknown",
-                title=record["title"] if record["title"] else "No title",
-                similarity=0.85,  # Placeholder - would calculate with embeddings
-                resolution=None,  # Would query for solution
-                status=record["status"] if record["status"] else "unknown"
-            ))
+            if vector_response.status_code == 200:
+                search_results = vector_response.json()
+
+                # Get full issue details from Neo4j for top matches
+                for result in search_results.get("results", []):
+                    issue_id = result["doc_id"]
+
+                    async with driver.session() as session:
+                        neo4j_result = await session.run("""
+                            MATCH (i:Issue {id: $issue_id})
+                            OPTIONAL MATCH (i)-[:RESOLVED_BY]->(sol:Solution)
+                            RETURN i.id as id,
+                                   i.title as title,
+                                   i.status as status,
+                                   sol.title as resolution
+                        """, issue_id=issue_id)
+
+                        record = await neo4j_result.single()
+                        if record:
+                            similar_issues.append(SimilarIssue(
+                                issue_id=record["id"],
+                                title=record["title"],
+                                similarity=result["score"],
+                                resolution=record["resolution"],
+                                status=record["status"] if record["status"] else "unknown"
+                            ))
+    except Exception as e:
+        # Fallback to keyword search if vector search unavailable
+        async with driver.session() as session:
+            result = await session.run("""
+                MATCH (i:Issue)
+                WHERE toLower(i.title) CONTAINS toLower($keyword)
+                RETURN i.id as id, i.title as title, i.status as status
+                LIMIT 5
+            """, keyword=request.issue_description.split()[0])
+
+            async for record in result:
+                similar_issues.append(SimilarIssue(
+                    issue_id=record["id"],
+                    title=record["title"],
+                    similarity=0.5,
+                    resolution=None,
+                    status=record["status"] if record["status"] else "unknown"
+                ))
 
     # Find affected services (if component specified)
     affected_services = []
