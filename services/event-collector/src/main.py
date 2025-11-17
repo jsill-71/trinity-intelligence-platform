@@ -46,6 +46,7 @@ async def startup():
     try:
         await js.add_stream(name="GIT_COMMITS", subjects=["git.commits"])
         await js.add_stream(name="GITHUB_EVENTS", subjects=["github.>"])
+        await js.add_stream(name="NTAI_EVENTS", subjects=["ntai.>"])
         logger.info("JetStream streams configured")
     except Exception as e:
         logger.warning(f"Streams may already exist: {e}")
@@ -75,6 +76,51 @@ async def shutdown():
     if db_pool:
         await db_pool.close()
 
+
+@app.post("/webhooks/ntai")
+async def ntai_webhook(
+    request: Request,
+    x_nt_ai_event: str = Header(...),
+    x_webhook_secret: str = Header(None)
+):
+    """
+    Receive NT-AI-Engine webhook events
+
+    Validates secret and publishes to NATS
+    """
+
+    # Validate secret
+    if x_webhook_secret:
+        if x_webhook_secret != WEBHOOK_SECRET:
+            raise HTTPException(401, "Invalid webhook secret")
+
+    payload = await request.json()
+
+    # Extract event data
+    event_data = {
+        "event_type": payload.get("event_type", f"ntai.{x_nt_ai_event}"),
+        "tenant_id": payload.get("tenant_id"),
+        "timestamp": payload.get("timestamp", datetime.now().isoformat()),
+        **payload.get("data", {})
+    }
+
+    # Publish to NATS
+    await nc.publish(f"ntai.{x_nt_ai_event}", json.dumps(event_data).encode('utf-8'))
+
+    # Store in PostgreSQL
+    await db_pool.execute(
+        """
+        INSERT INTO events (event_type, event_data, timestamp)
+        VALUES ($1, $2, $3)
+        """,
+        event_data["event_type"],
+        json.dumps(event_data),
+        datetime.now()
+    )
+
+    logger.info(f"Published NT-AI event: {x_nt_ai_event} (tenant: {payload.get('tenant_id')})")
+
+    return {"status": "received", "event": x_nt_ai_event}
 
 @app.post("/webhooks/github")
 async def github_webhook(

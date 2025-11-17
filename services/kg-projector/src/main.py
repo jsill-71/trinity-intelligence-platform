@@ -8,6 +8,7 @@ import os
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 from nats.aio.client import Client as NATS
 from neo4j import GraphDatabase, AsyncGraphDatabase
 
@@ -76,6 +77,9 @@ class KnowledgeGraphProjector:
 
         # Subscribe to code analysis
         await self.nc.subscribe("code.service.>", cb=self.handle_service_event)
+
+        # Subscribe to NT-AI-Engine events
+        await self.nc.subscribe("ntai.>", cb=self.handle_ntai_event)
 
         logger.info("Subscribed to event streams")
 
@@ -234,6 +238,100 @@ class KnowledgeGraphProjector:
 
         except Exception as e:
             logger.error(f"Error projecting service: {e}")
+
+    async def handle_ntai_event(self, msg):
+        """Project NT-AI-Engine event into Neo4j"""
+
+        try:
+            event_str = msg.data.decode()
+            event = json.loads(event_str)
+
+            event_type = event.get("event_type", "unknown")
+            tenant_id = event.get("tenant_id", "unknown")
+
+            async with self.neo4j.session() as session:
+                # Create tenant node if not exists
+                await session.run("""
+                    MERGE (t:Tenant {id: $tenant_id})
+                    SET t.last_activity = datetime($timestamp)
+                """,
+                    tenant_id=tenant_id,
+                    timestamp=event.get("timestamp", datetime.now(timezone.utc).isoformat())
+                )
+
+                # Handle different NT-AI event types
+                if "email" in event_type:
+                    await session.run("""
+                        MERGE (t:Tenant {id: $tenant_id})
+                        MERGE (e:EmailEvent {id: $event_id})
+                        SET e.from = $from,
+                            e.subject = $subject,
+                            e.importance_score = $importance,
+                            e.timestamp = datetime($timestamp)
+                        MERGE (t)-[:HAD_EMAIL_EVENT]->(e)
+                    """,
+                        tenant_id=tenant_id,
+                        event_id=event.get("email_id", f"email-{datetime.now().timestamp()}"),
+                        from_addr=event.get("from", "unknown"),
+                        subject=event.get("subject", ""),
+                        importance=event.get("importance_score", 0),
+                        timestamp=event.get("timestamp")
+                    )
+
+                elif "task" in event_type:
+                    await session.run("""
+                        MERGE (t:Tenant {id: $tenant_id})
+                        MERGE (task:Task {id: $task_id})
+                        SET task.name = $name,
+                            task.created_from = $source,
+                            task.timestamp = datetime($timestamp)
+                        MERGE (t)-[:CREATED_TASK]->(task)
+                    """,
+                        tenant_id=tenant_id,
+                        task_id=event.get("task_id", f"task-{datetime.now().timestamp()}"),
+                        name=event.get("task_name", ""),
+                        source=event.get("created_from", ""),
+                        timestamp=event.get("timestamp")
+                    )
+
+                elif "error" in event_type:
+                    # Create Issue node for errors from NT-AI-Engine
+                    await session.run("""
+                        MERGE (t:Tenant {id: $tenant_id})
+                        MERGE (i:Issue {id: $issue_id})
+                        SET i.title = $message,
+                            i.category = $error_type,
+                            i.component = $component,
+                            i.severity = 'high',
+                            i.status = 'open',
+                            i.timestamp = datetime($timestamp)
+                        MERGE (t)-[:REPORTED_ISSUE]->(i)
+                    """,
+                        tenant_id=tenant_id,
+                        issue_id=f"ntai-error-{tenant_id}-{datetime.now().timestamp()}",
+                        message=event.get("error_message", "Unknown error"),
+                        error_type=event.get("error_type", "unknown"),
+                        component=event.get("component", "unknown"),
+                        timestamp=event.get("timestamp")
+                    )
+
+                    # Link to affected service if component known
+                    if event.get("component"):
+                        issue_id_val = f"ntai-error-{tenant_id}-{datetime.now().timestamp()}"
+                        await session.run("""
+                            MERGE (s:Service {name: $component})
+                            WITH s
+                            MATCH (i:Issue {id: $issue_id})
+                            MERGE (s)-[:HAD_ISSUE]->(i)
+                        """,
+                            component=event["component"],
+                            issue_id=issue_id_val
+                        )
+
+                logger.info(f"Projected NT-AI event: {event_type} (tenant: {tenant_id})")
+
+        except Exception as e:
+            logger.error(f"Error projecting NT-AI event: {e}")
 
     async def run_forever(self):
         """Keep projector running"""
